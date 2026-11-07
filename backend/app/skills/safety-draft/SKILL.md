@@ -8,26 +8,25 @@ entrypoint: safety_agent.classify_action_risk
 tools:
   - safety_agent.classify_action_risk
   - kynflow_search_evidence
-input_modes:
-  - write_intent_from_chat
-  - external_send_intent
 triggers:
-  - 评论
-  - 回复
-  - comment
+  - 评论 issue
+  - 评论 PR
+  - 回复 issue
+  - 回复 PR
+  - 回复评论
   - 打标签
-  - label
   - 关闭 issue
   - 创建 issue
   - 发送报告
   - 外部发送
-  - 写入
+  - comment issue
+  - comment pr
 workflow_steps:
   - detect_write_or_send_intent
   - classify_action_risk
   - draft_human_reviewable_output
   - require_confirmation
-output_contract: SafetyDraft
+output_contract: safety_draft
 safety_level: guarded_write_draft
 ---
 

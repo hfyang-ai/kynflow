@@ -13,10 +13,6 @@ tools:
   - kynflow_search_evidence
   - kynflow_get_thread_context
   - kynflow_read_session_events
-input_modes:
-  - current_implementation
-  - historical_decision
-  - conversation_recall
 triggers:
   - 当前实现
   - 源码

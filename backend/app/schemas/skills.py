@@ -11,7 +11,6 @@ class SkillManifestResponse(BaseModel):
     category: str
     entrypoint: str
     tools: list[str] = Field(default_factory=list)
-    input_modes: list[str] = Field(default_factory=list)
     triggers: list[str] = Field(default_factory=list)
     workflow_steps: list[str] = Field(default_factory=list)
     output_contract: str

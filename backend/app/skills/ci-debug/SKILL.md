@@ -10,9 +10,6 @@ tools:
   - workspace.search_code
   - workspace.read_file
   - rag.search_similar_documents
-input_modes:
-  - latest_failed_workflow_run
-  - ci_context_from_chat
 triggers:
   - ci
   - workflow

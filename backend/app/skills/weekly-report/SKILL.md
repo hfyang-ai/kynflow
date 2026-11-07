@@ -7,15 +7,13 @@ category: reporting
 entrypoint: report_agent.generate_weekly_report
 tools:
   - report_agent.generate_weekly_report
-input_modes:
-  - repository_activity_window
-  - report_request_from_chat
+  - workspace.read_file
+  - workspace.search_code
 triggers:
   - 周报
   - weekly report
   - 工程摘要
   - 活动摘要
-  - 项目健康
   - 仓库报告
 workflow_steps:
   - collect_activity_window

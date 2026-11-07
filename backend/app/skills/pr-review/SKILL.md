@@ -10,15 +10,12 @@ tools:
   - workspace.read_file
   - workspace.search_code
   - rag.search_similar_documents
-input_modes:
-  - latest_synced_pr
-  - pr_context_from_chat
 triggers:
   - pr
   - pull request
+  - code review
   - 合并请求
   - 代码审查
-  - review
   - 能不能合并
 workflow_steps:
   - collect_pr_diff_and_comments

@@ -9,17 +9,12 @@ tools:
   - issue_agent.analyze_issue
   - rag.search_similar_documents
   - kynflow_search_evidence
-input_modes:
-  - latest_synced_issue
-  - issue_context_from_chat
 triggers:
   - issue
   - bug
   - 工单
   - 分诊
   - 优先级
-  - 负责人
-  - 分配
 workflow_steps:
   - collect_issue_context
   - classify_impact_and_type
