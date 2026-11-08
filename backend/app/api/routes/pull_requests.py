@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session, selectinload
 from app.db.models import (
     AnalysisResult,
     CodeRelation,
-    CodeSymbol,
     Conversation,
     Document,
     PullRequest,
@@ -22,6 +21,7 @@ from app.db.session import get_db
 from app.schemas.pull_requests import PRAnalysisResponse, PullRequestResponse
 from app.services.agents.pr_review_agent import PRReviewAgent
 from app.services.chat_memory import ContextAssembler
+from app.services.code_graph import pr_changed_paths, query_pr_symbols
 from app.services.code_search import search_repository_code
 from app.services.rag.retrieval import search_similar_documents
 from app.services.worktree_manager import cleanup_pr_snapshots, prepare_pr_worktree
@@ -313,19 +313,8 @@ def _prepare_pr_snapshot_context(db: Session, pr: PullRequest, enabled: bool) ->
 
 
 def _pr_code_graph_impact(db: Session, pr: PullRequest) -> dict:
-    changed_paths = list(
-        dict.fromkeys(file.filename for file in pr.files if file.filename)
-    )
-    symbol_query = db.query(CodeSymbol).filter(
-        CodeSymbol.repo_id == pr.repo_id, CodeSymbol.pr_id == pr.id
-    )
-    if changed_paths:
-        symbol_query = symbol_query.filter(CodeSymbol.path.in_(changed_paths))
-    symbols = (
-        symbol_query.order_by(CodeSymbol.path.asc(), CodeSymbol.start_line.asc())
-        .limit(30)
-        .all()
-    )
+    changed_paths = pr_changed_paths(pr)
+    symbols = query_pr_symbols(db, pr, limit=30)
     symbol_names = [symbol.name for symbol in symbols]
     relation_query = db.query(CodeRelation).filter(
         CodeRelation.repo_id == pr.repo_id, CodeRelation.pr_id == pr.id

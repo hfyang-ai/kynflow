@@ -15,6 +15,12 @@ from app.tools.analyze_ci import AnalyzeCiParams
 from app.tools.analyze_issue import AnalyzeIssueParams
 from app.tools.analyze_pr import AnalyzePrParams
 from app.tools.check_safety import CheckSafetyParams
+from app.tools.code_graph import (
+    FindSymbolParams,
+    OutlineParams,
+    PrChangedSymbolsParams,
+    ReadSymbolParams,
+)
 from app.tools.engineering_workflow import EngineeringWorkflowParams
 from app.tools.generate_report import GenerateReportParams
 from app.tools.memory_mcp import SearchEvidenceParams, ThreadContextParams
@@ -28,6 +34,10 @@ TOOL_PARAMS: dict[str, type[BaseModel]] = {
     "workspace.list_files": ListFilesParams,
     "workspace.read_file": ReadFileParams,
     "workspace.search_code": SearchCodeParams,
+    "code.read_symbol": ReadSymbolParams,
+    "code.outline": OutlineParams,
+    "code.find_symbol": FindSymbolParams,
+    "code.pr_changed_symbols": PrChangedSymbolsParams,
     "repo_health.generate_summary": RepoHealthParams,
     "rag.search_similar_documents": SemanticSearchParams,
     "issue_agent.analyze_issue": AnalyzeIssueParams,

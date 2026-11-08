@@ -14,6 +14,12 @@ from app.tools.analyze_ci import analyze_ci_tool
 from app.tools.analyze_issue import analyze_issue_tool
 from app.tools.analyze_pr import analyze_pr_tool
 from app.tools.check_safety import check_safety_tool
+from app.tools.code_graph import (
+    find_symbol_tool,
+    outline_tool,
+    pr_changed_symbols_tool,
+    read_symbol_tool,
+)
 from app.tools.context import ToolContext
 from app.tools.engineering_workflow import run_engineering_workflow_tool
 from app.tools.generate_report import generate_report_tool
@@ -45,6 +51,10 @@ def build_conversation_tools(
         "workspace.list_files": bind(list_workspace_files_tool),
         "workspace.read_file": bind(read_workspace_file_tool),
         "workspace.search_code": bind(search_workspace_code_tool),
+        "code.read_symbol": bind(read_symbol_tool),
+        "code.outline": bind(outline_tool),
+        "code.find_symbol": bind(find_symbol_tool),
+        "code.pr_changed_symbols": bind(pr_changed_symbols_tool),
         "repo_health.generate_summary": bind(repo_health_tool),
         "rag.search_similar_documents": bind(semantic_search_tool),
         "issue_agent.analyze_issue": bind(analyze_issue_tool),

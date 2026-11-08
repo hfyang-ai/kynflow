@@ -123,6 +123,10 @@ class ChatAgent(BaseAgent):
         "workspace.list_files",
         "workspace.read_file",
         "workspace.search_code",
+        "code.read_symbol",
+        "code.outline",
+        "code.find_symbol",
+        "code.pr_changed_symbols",
         "repo_health.generate_summary",
         "rag.search_similar_documents",
         "issue_agent.analyze_issue",
@@ -991,21 +995,28 @@ class ChatAgent(BaseAgent):
         action_input: dict[str, Any],
         observation: dict[str, Any],
     ) -> None:
-        """记录成功读到的行区间，供后续判定"重复读取"使用。"""
-        if public_action != "workspace.read_file":
-            return
+        """记录成功读到的行区间，供后续判定"重复读取"使用。
+
+        覆盖两类读路径：workspace.read_file 回传 ``read_range``，code.read_symbol
+        也回传 ``read_range``（符号体实际切片区间）。两者共用同一 read_coverage
+        命名空间，使 read_symbol 之后重读同一区间的 read_file 能被 redundant_read
+        正确识别。
+        """
         read_range = observation.get("read_range")
         if isinstance(read_range, dict):
             path = str(read_range.get("path") or action_input.get("path") or "").strip()
             start = int(read_range.get("start_line") or 0)
             end = int(read_range.get("end_line") or 0)
-        else:
-            # 工具未回传区间（自定义/测试替身）时按请求区间计。
+        elif public_action == "workspace.read_file":
+            # read_file 未回传区间（自定义/测试替身）时按请求区间计。
             path = str(action_input.get("path") or "").strip()
             span = self._read_request_span(action_input)
             if span is None:
                 return
             start, end = span
+        else:
+            # 其他工具未回传 read_range，不参与区间记录。
+            return
         if not path or start < 1 or end < start:
             return
         coverage = {
@@ -1951,6 +1962,10 @@ class ChatAgent(BaseAgent):
             "workspace.list_files": "列出所选仓库本地 checkout 下的文件。只读，用于探索源码树。",
             "workspace.read_file": "从所选仓库 checkout 中读取文本文件，可指定 start_line 和 line_count。只读。",
             "workspace.search_code": "在所选仓库 checkout 中搜索代码或文档文本。只读。",
+            "code.read_symbol": "按符号名直接读取单个函数/类/方法的完整函数体（基于 tree-sitter 符号表定位行号）。先用 code.outline 或 code.find_symbol 拿到符号名，再用本工具定向读取，避免整文件盲读。只读。",
+            "code.outline": "返回一个文件的符号地图（每个符号的 name/kind/起止行号）。用于快速了解文件结构，再用 code.read_symbol 定向读取具体符号。只读。",
+            "code.find_symbol": "跨文件按符号名查找定义位置（返回列表，含 path/kind/起止行号）。默认精确匹配；用 match=prefix 或 match=contains 可做前缀/子串模糊搜索。只命中 tree-sitter 解析出的符号定义，不含注释、文档或调用点。只读。",
+            "code.pr_changed_symbols": "列出某个 PR 变更文件内的符号清单（touched-file 近似：变更文件里的所有符号，非精确增删改集）。配合 code.read_symbol 只读变更符号体，替代读整份 diff。只读。",
             "repo_health.generate_summary": "总结当前仓库健康状态。",
             "rag.search_similar_documents": "搜索项目历史与非结构化知识，包括 Issue 描述、PR 说明与 Review 讨论、失败 CI 日志、项目文档、上传知识和已批准的长期记忆。可传入改写后的 query，并用不同 query 连续调用以补查和交叉验证。源码优先使用 workspace 工具，团队成员和实时状态使用对应结构化工具。",
             "issue_agent.analyze_issue": "分析最新同步的 Issue。",
