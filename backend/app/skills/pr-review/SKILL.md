@@ -1,7 +1,7 @@
 ---
 name: pr-review
 title: PR 审查
-version: 0.1.0
+version: 0.2.0
 description: 审查已同步的 Pull Request，输出摘要、关键变更、P1/P2/P3 分级发现、阻塞项、测试缺口和需要关注的文件。
 category: github-analysis
 entrypoint: pr_review_agent.analyze_pr

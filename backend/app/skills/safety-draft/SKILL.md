@@ -1,7 +1,7 @@
 ---
 name: safety-draft
 title: 安全草稿
-version: 0.1.0
+version: 0.2.0
 description: 识别有风险的外部发送或 GitHub 写操作，生成可人工确认的草稿，而不是直接执行写入。
 category: safety
 entrypoint: safety_agent.classify_action_risk

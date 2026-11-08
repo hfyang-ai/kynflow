@@ -1,7 +1,7 @@
 ---
 name: weekly-report
 title: 研发周报
-version: 0.1.0
+version: 0.2.0
 description: 根据指定范围内的 Issue、Pull Request、CI 运行和趋势上下文生成仓库研发周报。
 category: reporting
 entrypoint: report_agent.generate_weekly_report

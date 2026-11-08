@@ -1,7 +1,7 @@
 ---
 name: issue-triage
 title: Issue 分诊
-version: 0.1.0
+version: 0.2.0
 description: 将已同步的 GitHub Issue 分析为分类、优先级、复杂度、负责人建议和行动项。
 category: github-analysis
 entrypoint: issue_agent.analyze_issue
