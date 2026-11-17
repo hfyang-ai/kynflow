@@ -12,6 +12,7 @@ Kynflow 是一个面向 GitHub PR / Issue 研发协作的全栈 AI Agent 项目�
 - 多 Agent 工作流审查：`WorkflowOrchestrator` 构建 Planner -> 专用 Agent -> Observer -> Synthesis 的闭环，用于 PR 就绪度、阻塞项、优先级和跨领域工程决策。
 - Skill Runtime：按用户显式指定或触发条件选择 `SKILL.md`，只向当前任务加载完整指令与受限资源；显式 Skill 校验允许工具，多 Agent 中的专用 Agent 分别加载自己的 Skill，并把版本、激活原因、指令摘要和执行校验写入 trace。
 - 工作区代码工具：安全地列出文件、读取文件和搜索本地代码。
+- 代码符号查询：基于 tree-sitter 代码图，用 `code.outline` 查看文件符号地图、`code.find_symbol` 跨文件定位符号（精确/前缀/子串匹配）、`code.read_symbol` 定向读取单个函数体、`code.pr_changed_symbols` 列出 PR 变更文件内的符号，避免整文件盲读，降低 Agent 回合数与 token 消耗。
 - RAG 聚焦 Issue 描述、PR 说明与 Review 评论、失败 CI 日志、项目文档、上传知识和已批准的长期记忆；当前代码走工作区/词法检索，团队与实时状态走结构化查询。
 - 生成工程周报。
 - 基础 Eval 覆盖 Issue 分类、PR 覆盖度、RAG 命中率、工具 schema 就绪度和结构化输出校验。
@@ -45,7 +46,7 @@ uv run pytest app/tests/test_workflow_live_models.py -v
 
 ## 技术栈
 
-- 后端：Python、FastAPI、Pydantic、SQLAlchemy、PostgreSQL、Milvus、httpx、LangChain。
+- 后端：Python、FastAPI、Pydantic、SQLAlchemy、PostgreSQL、Milvus、httpx、LangChain、tree-sitter（代码符号解析）。
 - Agent 编排：原生工具调用 + 专用分析 Agent。
 - 前端：Next.js、TypeScript、Tailwind CSS、React Query。
 - 基础设施：Docker Compose 与 `.env` 配置。
@@ -65,6 +66,7 @@ flowchart TD
     Workflow --> Observer["观察 Agent"]
     Workflow --> Synthesis["综合 Agent"]
     Conv --> Workspace["工作区工具"]
+    Conv --> CodeGraph["代码符号查询"]
     Conv --> Memory["记忆 / RAG 工具"]
     Conv --> Issue["Issue 分析 Agent"]
     Conv --> PR["PR 审查 Agent"]

@@ -19,5 +19,8 @@
 - `POST /api/workflow-runs/{run_id}/analyze`
 - `POST /api/chat`
 - `POST /api/search`
+- `GET /api/repos/{repo_id}/code-symbols`
+- `GET /api/repos/{repo_id}/code-graph/search`
+- `POST /api/repos/{repo_id}/code-graph/rebuild`
 - `POST /api/reports/weekly`
 - `POST /api/evals/run`

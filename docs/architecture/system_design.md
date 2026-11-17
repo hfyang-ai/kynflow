@@ -10,4 +10,5 @@ flowchart TD
   Backend --> PostgreSQL
   Backend --> LLM
   Backend --> Agents
+  Backend --> TreeSitter["tree-sitter 代码图"]
 ```
