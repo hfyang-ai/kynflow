@@ -86,15 +86,20 @@ export default function KnowledgeBaseDetailPage() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [base, docs, models] = await Promise.all([
+    const [base, docs] = await Promise.all([
       apiGet<KnowledgeBase>(`/api/rag/repositories/${id}`),
       apiGet<KnowledgeDocument[]>(`/api/rag/repositories/${id}/documents`),
-      apiGet<ModelCatalog>("/api/rag/models"),
     ]);
     setKnowledge(base);
     setDocuments(docs);
-    setCatalog(models);
     setConfig(base.config);
+  }, [id]);
+
+  // 轮询只拉文档列表（不再重复拉知识库详情与模型目录）。
+  const loadDocuments = useCallback(async () => {
+    const docs = await apiGet<KnowledgeDocument[]>(`/api/rag/repositories/${id}/documents`);
+    setDocuments(docs);
+    return docs;
   }, [id]);
 
   const loadHistory = useCallback(() => {
@@ -110,13 +115,55 @@ export default function KnowledgeBaseDetailPage() {
       .catch((reason: Error) => setError(reason.message))
       .finally(() => setLoading(false));
     loadHistory();
+    // 模型目录基本不变，只在进入页面时拉一次。
+    apiGet<ModelCatalog>("/api/rag/models")
+      .then(setCatalog)
+      .catch(() => null);
   }, [load, loadHistory]);
 
+  const hasActiveDocuments = documents.some(
+    (item) => !["completed", "failed"].includes(item.status),
+  );
+
   useEffect(() => {
-    if (!documents.some((item) => !["completed", "failed"].includes(item.status))) return;
-    const timer = window.setInterval(() => load().catch(() => null), 1000);
-    return () => window.clearInterval(timer);
-  }, [documents, load]);
+    if (!hasActiveDocuments) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    let delay = 2000;
+
+    const schedule = (ms: number) => {
+      if (!cancelled) timer = setTimeout(poll, ms);
+    };
+
+    async function poll() {
+      // 页面在后台时降低轮询频率，避免无意义的后端压力。
+      if (document.hidden) {
+        schedule(8000);
+        return;
+      }
+      try {
+        await loadDocuments();
+        if (cancelled) return;
+        failures = 0;
+        delay = 2000;
+        schedule(delay);
+      } catch {
+        if (cancelled) return;
+        failures += 1;
+        // 连续失败则停止轮询，由用户手动刷新；否则指数退避。
+        if (failures >= 5) return;
+        delay = Math.min(Math.round(delay * 1.6), 10_000);
+        schedule(delay);
+      }
+    }
+
+    schedule(delay);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [hasActiveDocuments, loadDocuments]);
 
   function changeTab(next: Tab) {
     setTab(next);

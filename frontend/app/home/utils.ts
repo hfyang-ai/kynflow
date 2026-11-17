@@ -473,7 +473,7 @@ export function classifyIssue(issue: Issue) {
 
 export function classifyPr(pr: PullRequest) {
   const text =
-    `${pr.title} ${pr.body ?? ""} ${(pr.files ?? []).map((file) => file.patch ?? file.filename).join(" ")}`.toLowerCase();
+    `${pr.title} ${pr.body ?? ""} ${(pr.files ?? []).map((file) => file.filename).join(" ")}`.toLowerCase();
   if (pr.state === "closed" && !pr.merged_at) return "rejected";
   if (text.includes("conflict")) return "conflict";
   if (pr.merged_at) return "done";

@@ -338,11 +338,18 @@ async def _issue_analysis_sse(
 
 
 @router.get("/repos/{repo_id}/issues", response_model=list[IssueResponse])
-async def list_issues(repo_id: UUID, db: Session = Depends(get_db)) -> list[Issue]:
+async def list_issues(
+    repo_id: UUID,
+    limit: int = Query(default=300, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[Issue]:
     return (
         db.query(Issue)
         .filter(Issue.repo_id == repo_id)
         .order_by(Issue.number.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 

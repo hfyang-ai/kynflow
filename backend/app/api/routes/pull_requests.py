@@ -18,7 +18,11 @@ from app.db.models import (
     WorkflowRun,
 )
 from app.db.session import get_db
-from app.schemas.pull_requests import PRAnalysisResponse, PullRequestResponse
+from app.schemas.pull_requests import (
+    PRAnalysisResponse,
+    PullRequestResponse,
+    PullRequestSummaryResponse,
+)
 from app.services.agents.pr_review_agent import PRReviewAgent
 from app.services.chat_memory import ContextAssembler
 from app.services.code_graph import pr_changed_paths, query_pr_symbols
@@ -592,17 +596,20 @@ async def _pr_analysis_sse(
         yield _encode_sse("error", {"message": f"分析失败：{exc}"})
 
 
-@router.get("/repos/{repo_id}/pull-requests", response_model=list[PullRequestResponse])
+@router.get("/repos/{repo_id}/pull-requests", response_model=list[PullRequestSummaryResponse])
 async def list_pull_requests(
-    repo_id: UUID, db: Session = Depends(get_db)
+    repo_id: UUID,
+    limit: int = Query(default=300, ge=1, le=1000),
+    db: Session = Depends(get_db),
 ) -> list[PullRequest]:
+    # 列表只返回文件元信息，不返回 patch 全文与 review comments；
+    # eagar-load files 以避免逐条查询造成 N+1。
     return (
         db.query(PullRequest)
-        .options(
-            selectinload(PullRequest.files), selectinload(PullRequest.review_comments)
-        )
+        .options(selectinload(PullRequest.files))
         .filter(PullRequest.repo_id == repo_id)
         .order_by(PullRequest.number.desc())
+        .limit(limit)
         .all()
     )
 

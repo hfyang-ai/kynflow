@@ -12,8 +12,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { MarkdownMessage } from "@/components/markdown-message";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
@@ -507,9 +506,7 @@ export default function RAGPage() {
                   className={`rounded-md px-4 py-3 text-sm leading-7 ${turn.role === "user" ? "bg-accent text-white" : "border border-line bg-panel-2 text-ink"}`}
                 >
                   {turn.role === "assistant" ? (
-                    <div className="markdown-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.content}</ReactMarkdown>
-                    </div>
+                    <MarkdownMessage content={turn.content} />
                   ) : (
                     turn.content
                   )}

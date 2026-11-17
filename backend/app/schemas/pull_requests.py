@@ -17,6 +17,18 @@ class PRFileResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PRFileSummaryResponse(BaseModel):
+    """列表场景使用的文件摘要：不含 patch 全文，避免列表接口携带全部 diff。"""
+
+    id: UUID
+    filename: str
+    status: str
+    additions: int
+    deletions: int
+
+    model_config = {"from_attributes": True}
+
+
 class PRReviewCommentResponse(BaseModel):
     id: UUID
     body: str | None = None
@@ -44,6 +56,29 @@ class PullRequestResponse(BaseModel):
     updated_at: datetime | None = None
     files: list[PRFileResponse] = []
     review_comments: list[PRReviewCommentResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class PullRequestSummaryResponse(BaseModel):
+    """PR 列表专用：带文件元信息（文件名/增删行数），但不带 patch 与 review comments。
+
+    详情请走 GET /api/pull-requests/{pr_id} 获取完整 PullRequestResponse。
+    """
+
+    id: UUID
+    repo_id: UUID
+    number: int
+    title: str
+    body: str | None = None
+    state: str
+    author: str | None = None
+    base_branch: str | None = None
+    head_branch: str | None = None
+    merged_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    files: list[PRFileSummaryResponse] = []
 
     model_config = {"from_attributes": True}
 

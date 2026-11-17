@@ -72,6 +72,7 @@ import {
   WorkflowPlanCard,
 } from "./components/chat";
 import { SkillMcpWorkspace } from "./components/skill-mcp";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { CIAnalysisOverlay, IssueAnalysisOverlay, PRAnalysisOverlay } from "./components/analysis";
 import { AddProjectOverlay } from "./components/add-project";
 import {
@@ -91,6 +92,17 @@ import {
   workspaceSelectionToGraphCenter,
 } from "./components/knowledge-graph";
 
+// 纯 CSS 动画的 loading 指示器：避免用 setInterval + setState 驱动整页重渲染。
+function LoadingDots() {
+  return (
+    <span className="loading-dots" aria-hidden="true">
+      <span>.</span>
+      <span>.</span>
+      <span>.</span>
+    </span>
+  );
+}
+
 export default function DashboardPage() {
   const chat = useWorkspaceChat();
   const {
@@ -101,6 +113,7 @@ export default function DashboardPage() {
     expandedRepoIds,
     messages,
     loading,
+    reposError,
     selectedRepo,
     selectedRepoConversations,
     selectedConversation,
@@ -163,6 +176,9 @@ export default function DashboardPage() {
   >({});
   const [graphLoadingRepoId, setGraphLoadingRepoId] = useState<string | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [repoDataError, setRepoDataError] = useState<string | null>(null);
+  // CI 列表不再返回全量日志，选中某次运行时按需拉取详情。
+  const [runDetailById, setRunDetailById] = useState<Record<string, WorkflowRun>>({});
   const [graphQuery, setGraphQuery] = useState("");
   const [selectedGraphNodeKey, setSelectedGraphNodeKey] = useState<string | null>(null);
   const [hiddenGraphNodeTypes, setHiddenGraphNodeTypes] = useState<Record<string, boolean>>({});
@@ -191,7 +207,6 @@ export default function DashboardPage() {
     {},
   );
   const [loadingPromptRepoId, setLoadingPromptRepoId] = useState<string | null>(null);
-  const [promptLoadingDots, setPromptLoadingDots] = useState(".");
   const [issueAnalysisById, setIssueAnalysisById] = useState<Record<string, IssueAnalysisResponse>>(
     {},
   );
@@ -218,6 +233,8 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState<SyncNotice | null>(null);
   const preserveWorkspaceSelectionRef = useRef(false);
+  // 当前选中的仓库 id：用于丢弃「切仓库后迟到的旧响应」，避免数据串仓。
+  const activeRepoIdRef = useRef(selectedRepoId);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const promptRowRef = useRef<HTMLDivElement>(null);
   const promptMeasureRef = useRef<HTMLDivElement>(null);
@@ -231,14 +248,24 @@ export default function DashboardPage() {
   const loadingPrompts = Boolean(selectedRepo?.id && loadingPromptRepoId === selectedRepo.id);
 
   async function loadRepoData(repoId: string) {
-    const [issueItems, prItems, runItems] = await Promise.all([
-      apiGet<Issue[]>(`/api/repos/${repoId}/issues`).catch(() => []),
-      apiGet<PullRequest[]>(`/api/repos/${repoId}/pull-requests`).catch(() => []),
-      apiGet<WorkflowRun[]>(`/api/repos/${repoId}/workflow-runs`).catch(() => []),
+    const results = await Promise.allSettled([
+      apiGet<Issue[]>(`/api/repos/${repoId}/issues`),
+      apiGet<PullRequest[]>(`/api/repos/${repoId}/pull-requests`),
+      apiGet<WorkflowRun[]>(`/api/repos/${repoId}/workflow-runs`),
     ]);
-    setIssues(issueItems);
-    setPrs(prItems);
-    setRuns(runItems);
+    // 用户已切换到别的仓库时，丢弃这批迟到的响应，避免旧数据覆盖新仓库。
+    if (activeRepoIdRef.current !== repoId) return;
+
+    const failures: string[] = [];
+    const [issuesResult, prsResult, runsResult] = results;
+    if (issuesResult.status === "fulfilled") setIssues(issuesResult.value);
+    else failures.push(`Issues ${getFriendlyError(issuesResult.reason)}`);
+    if (prsResult.status === "fulfilled") setPrs(prsResult.value);
+    else failures.push(`PRs ${getFriendlyError(prsResult.reason)}`);
+    if (runsResult.status === "fulfilled") setRuns(runsResult.value);
+    else failures.push(`CI ${getFriendlyError(runsResult.reason)}`);
+
+    setRepoDataError(failures.length ? `部分数据加载失败（${failures.join("；")}）` : null);
   }
 
   async function loadSkillRuntime() {
@@ -711,21 +738,36 @@ export default function DashboardPage() {
   }
 
   async function loadProjectKnowledge(repoId: string) {
-    const [members, knowledge] = await Promise.all([
-      apiGet<TeamMember[]>(`/api/repos/${repoId}/team-members`).catch(() => []),
-      apiGet<KnowledgeItem[]>(`/api/repos/${repoId}/knowledge`).catch(() => []),
+    const [membersResult, knowledgeResult] = await Promise.allSettled([
+      apiGet<TeamMember[]>(`/api/repos/${repoId}/team-members`),
+      apiGet<KnowledgeItem[]>(`/api/repos/${repoId}/knowledge`),
     ]);
-    setTeamMembers(members);
-    setKnowledgeItems(knowledge);
-    setMemoryNotes(
-      knowledge
-        .filter((item) => item.source_type === "memory_note")
-        .map((item) => ({
-          id: item.id,
-          title: item.title,
-          content: item.content_preview,
-        })),
+    if (activeRepoIdRef.current !== repoId) return;
+
+    if (membersResult.status === "fulfilled") setTeamMembers(membersResult.value);
+    if (knowledgeResult.status === "fulfilled") {
+      const knowledge = knowledgeResult.value;
+      setKnowledgeItems(knowledge);
+      setMemoryNotes(
+        knowledge
+          .filter((item) => item.source_type === "memory_note")
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            content: item.content_preview,
+          })),
+      );
+    }
+    const failures = [membersResult, knowledgeResult].filter(
+      (result) => result.status === "rejected",
     );
+    if (failures.length) {
+      setRepoDataError(
+        `团队与知识库加载失败（${failures
+          .map((result) => getFriendlyError((result as PromiseRejectedResult).reason))
+          .join("；")}）`,
+      );
+    }
   }
 
   async function loadProjectIndexState(repoId: string) {
@@ -857,6 +899,31 @@ export default function DashboardPage() {
   }, [workspaceTab]);
 
   // 仅在切换仓库时重载数据；setMessages 等来自跨路由 Provider 的稳定引用，无需列入依赖。
+  useEffect(() => {
+    activeRepoIdRef.current = selectedRepo?.id ?? "";
+  }, [selectedRepo?.id]);
+
+  // 选中 CI 运行时按需拉取详情（含 logs_text），列表接口本身不再携带日志。
+  useEffect(() => {
+    if (selectedWorkspaceItem?.type !== "ci") return;
+    const runId = selectedWorkspaceItem.id;
+    if (runDetailById[runId]) return;
+    let cancelled = false;
+    apiGet<WorkflowRun>(`/api/workflow-runs/${runId}`)
+      .then((run) => {
+        if (cancelled) return;
+        setRunDetailById((items) => ({ ...items, [runId]: run }));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setRepoDataError(`CI 日志加载失败：${getFriendlyError(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkspaceItem, runDetailById]);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (selectedRepo?.id) {
@@ -876,17 +943,6 @@ export default function DashboardPage() {
       setMessages([]);
     }
   }, [selectedRepo?.id]);
-
-  useEffect(() => {
-    if (!loadingPrompts) {
-      setPromptLoadingDots(".");
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setPromptLoadingDots((current) => (current.length >= 3 ? "." : `${current}.`));
-    }, 360);
-    return () => window.clearInterval(timer);
-  }, [loadingPrompts]);
 
   useEffect(() => {
     setWorkspaceQuery("");
@@ -1299,7 +1355,7 @@ export default function DashboardPage() {
       runs.filter((run) => {
         const derivedStatus = run.conclusion ?? run.status;
         return (
-          matchesQuery(workspaceQuery, [run.name, run.status, run.conclusion, run.logs_text]) &&
+          matchesQuery(workspaceQuery, [run.name, run.status, run.conclusion]) &&
           matchesStatus(workspaceStatus, derivedStatus) &&
           matchesTime(workspaceTime, run.updated_at ?? run.created_at)
         );
@@ -1325,7 +1381,8 @@ export default function DashboardPage() {
       : undefined;
   const selectedRun =
     selectedWorkspaceItem?.type === "ci"
-      ? runs.find((item) => item.id === selectedWorkspaceItem.id)
+      ? (runDetailById[selectedWorkspaceItem.id] ??
+        runs.find((item) => item.id === selectedWorkspaceItem.id))
       : undefined;
   const hasWorkspaceDetail = Boolean(selectedIssue || selectedPr || selectedRun);
   const analysisModalIssue = analysisModalIssueId
@@ -1424,8 +1481,14 @@ export default function DashboardPage() {
           className={`min-h-0 flex-1 overflow-y-auto ${isSidebarCollapsed ? "p-2" : "px-3 py-2"}`}
         >
           {repos.length === 0 && !isSidebarCollapsed && (
-            <div className="rounded-md bg-panel p-3 text-sm leading-6 text-muted">
-              还没有项目。请先添加一个项目。
+            <div className="space-y-2">
+              {reposError ? (
+                <ErrorBanner message={`项目列表加载失败：${reposError}`} />
+              ) : (
+                <div className="rounded-md bg-panel p-3 text-sm leading-6 text-muted">
+                  还没有项目。请先添加一个项目。
+                </div>
+              )}
             </div>
           )}
           {!isSidebarCollapsed && repos.length > 0 && (
@@ -1616,6 +1679,11 @@ export default function DashboardPage() {
             <MetricCard icon={AlertTriangle} label="失败 CI" value={failedRuns.length} />
             <MetricCard icon={CheckCircle2} label="已合并 PR" value={mergedPrs.length} />
           </div>
+          <ErrorBanner
+            message={repoDataError}
+            onDismiss={() => setRepoDataError(null)}
+            className="mt-3"
+          />
         </section>
 
         <div
@@ -1810,7 +1878,6 @@ export default function DashboardPage() {
                       id: item.id,
                       title: item.name,
                       meta: item.conclusion || item.status,
-                      detail: item.logs_text,
                       selected:
                         selectedWorkspaceItem?.type === "ci" &&
                         selectedWorkspaceItem.id === item.id,
@@ -2036,7 +2103,8 @@ export default function DashboardPage() {
                     <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
                       {loadingPrompts && promptSuggestions.length === 0 && (
                         <span className="shrink-0 rounded-full border border-line bg-panel px-3 py-1.5 text-xs text-faint">
-                          推荐生成中{promptLoadingDots}
+                          推荐生成中
+                          <LoadingDots />
                         </span>
                       )}
                       {promptSuggestions.slice(0, visiblePromptCount).map((prompt) => (

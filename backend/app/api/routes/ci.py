@@ -20,7 +20,11 @@ from app.db.models import (
     WorkflowRun,
 )
 from app.db.session import get_db
-from app.schemas.ci import CIAnalysisResponse, WorkflowRunResponse
+from app.schemas.ci import (
+    CIAnalysisResponse,
+    WorkflowRunResponse,
+    WorkflowRunSummaryResponse,
+)
 from app.services.agents.ci_debug_agent import CIDebugAgent
 from app.services.chat_memory import ContextAssembler
 from app.services.code_search import search_repository_code
@@ -656,14 +660,18 @@ async def _ci_analysis_sse(
         yield _encode_sse("error", {"message": f"分析失败：{exc}"})
 
 
-@router.get("/repos/{repo_id}/workflow-runs", response_model=list[WorkflowRunResponse])
+@router.get("/repos/{repo_id}/workflow-runs", response_model=list[WorkflowRunSummaryResponse])
 async def list_workflow_runs(
-    repo_id: UUID, db: Session = Depends(get_db)
+    repo_id: UUID,
+    limit: int = Query(default=300, ge=1, le=1000),
+    db: Session = Depends(get_db),
 ) -> list[WorkflowRun]:
+    # 列表不返回 jobs / logs_text（全量日志），详情走 GET /workflow-runs/{run_id}。
     return (
         db.query(WorkflowRun)
         .filter(WorkflowRun.repo_id == repo_id)
         .order_by(WorkflowRun.created_at.desc())
+        .limit(limit)
         .all()
     )
 

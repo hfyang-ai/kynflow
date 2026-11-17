@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Card, GhostButton, PageTitle, PrimaryButton } from "@/components/ui/card";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { apiGet, apiPost } from "@/lib/api";
 import type { Repository } from "@/lib/types";
 
@@ -22,23 +23,55 @@ type WorkflowRun = {
 export default function CIPage() {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [selected, setSelected] = useState<WorkflowRun | null>(null);
+  // 列表接口只返回摘要，选中后再拉取含 jobs / logs_text 的详情。
+  const [detail, setDetail] = useState<WorkflowRun | null>(null);
   const [analysis, setAnalysis] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<Repository[]>("/api/repos").then((repos) => {
-      if (repos[0]) {
-        apiGet<WorkflowRun[]>(`/api/repos/${repos[0].id}/workflow-runs`).then((items) => {
+    apiGet<Repository[]>("/api/repos")
+      .then((repos) => {
+        if (!repos[0]) return;
+        return apiGet<WorkflowRun[]>(`/api/repos/${repos[0].id}/workflow-runs`).then((items) => {
           setRuns(items);
           setSelected(items.find((item) => item.conclusion === "failure") ?? items[0] ?? null);
         });
-      }
-    });
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "加载 Workflow Runs 失败");
+      });
   }, []);
+
+  useEffect(() => {
+    if (!selected?.id) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setDetail(null);
+    apiGet<WorkflowRun>(`/api/workflow-runs/${selected.id}`)
+      .then((run) => {
+        if (!cancelled) setDetail(run);
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id]);
+
+  const runDetail = detail ?? selected;
 
   async function analyze() {
     if (!selected) return;
-    const data = await apiPost(`/api/workflow-runs/${selected.id}/analyze`, {});
-    setAnalysis(JSON.stringify(data, null, 2));
+    setError(null);
+    try {
+      const data = await apiPost(`/api/workflow-runs/${selected.id}/analyze`, {});
+      setAnalysis(JSON.stringify(data, null, 2));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "CI 分析失败");
+    }
   }
 
   return (
@@ -47,6 +80,7 @@ export default function CIPage() {
         title="CI Debug 分析"
         description="聚合 GitHub Actions 运行状态和失败日志，生成失败归因、排查步骤和相关风险提示。"
       />
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} className="mb-4" />}
       <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
         <Card>
           <div className="flex items-center justify-between">
@@ -79,10 +113,10 @@ export default function CIPage() {
 
         <Card>
           <h2 className="font-semibold text-ink">排查建议</h2>
-          {(selected?.jobs?.length ?? 0) > 0 && (
+          {(runDetail?.jobs?.length ?? 0) > 0 && (
             <div className="mt-3 rounded-md border border-line bg-panel p-3 text-xs leading-5 text-ink">
               <div className="font-medium text-ink">失败 Job</div>
-              {(selected?.jobs ?? [])
+              {(runDetail?.jobs ?? [])
                 .filter((job) => job.conclusion === "failure")
                 .map((job) => (
                   <div key={job.name} className="mt-2">
@@ -101,9 +135,9 @@ export default function CIPage() {
                 ))}
             </div>
           )}
-          {selected?.logs_text && (
+          {runDetail?.logs_text && (
             <pre className="mt-3 max-h-44 overflow-auto rounded-md border border-line bg-panel p-3 text-xs text-ink">
-              {selected.logs_text}
+              {runDetail.logs_text}
             </pre>
           )}
           <PrimaryButton onClick={analyze} disabled={!selected} className="mt-4">

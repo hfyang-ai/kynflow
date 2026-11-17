@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Card, GhostButton, PageTitle, PrimaryButton } from "@/components/ui/card";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { apiGet, apiPost } from "@/lib/api";
 import type { Repository } from "@/lib/types";
 
@@ -18,22 +19,31 @@ export default function PullRequestsPage() {
   const [prs, setPrs] = useState<PullRequest[]>([]);
   const [selected, setSelected] = useState<PullRequest | null>(null);
   const [analysis, setAnalysis] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<Repository[]>("/api/repos").then((repos) => {
-      if (repos[0]) {
-        apiGet<PullRequest[]>(`/api/repos/${repos[0].id}/pull-requests`).then((items) => {
+    apiGet<Repository[]>("/api/repos")
+      .then((repos) => {
+        if (!repos[0]) return;
+        return apiGet<PullRequest[]>(`/api/repos/${repos[0].id}/pull-requests`).then((items) => {
           setPrs(items);
           setSelected(items[0] ?? null);
         });
-      }
-    });
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "加载 Pull Requests 失败");
+      });
   }, []);
 
   async function analyze() {
     if (!selected) return;
-    const data = await apiPost(`/api/pull-requests/${selected.id}/analyze`, {});
-    setAnalysis(JSON.stringify(data, null, 2));
+    setError(null);
+    try {
+      const data = await apiPost(`/api/pull-requests/${selected.id}/analyze`, {});
+      setAnalysis(JSON.stringify(data, null, 2));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "PR 分析失败");
+    }
   }
 
   return (
@@ -42,6 +52,7 @@ export default function PullRequestsPage() {
         title="PR Review 助手"
         description="读取 changed files 和 diff，生成 PR 摘要、风险点、Review Checklist 与测试建议。"
       />
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} className="mb-4" />}
       <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
         <Card>
           <div className="flex items-center justify-between">

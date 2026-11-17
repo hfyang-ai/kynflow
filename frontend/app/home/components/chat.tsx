@@ -1,7 +1,5 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { BookOpen, CheckCircle2, ChevronDown, Gauge, ListTodo, RefreshCw } from "lucide-react";
 
 import type { ChatTraceItem, WorkflowPlan } from "../types";
@@ -410,21 +408,6 @@ export function ChatTraceInline({
   );
 }
 
-export function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          table: ({ children, ...props }) => (
-            <div className="markdown-table-wrap">
-              <table {...props}>{children}</table>
-            </div>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  );
-}
+import { MarkdownMessage } from "@/components/markdown-message";
+
+export { MarkdownMessage };

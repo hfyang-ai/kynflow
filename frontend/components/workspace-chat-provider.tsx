@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -10,6 +11,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiDelete, apiGet, apiPost, apiPostStream } from "@/lib/api";
 import type { Repository } from "@/lib/types";
@@ -59,6 +61,8 @@ type WorkspaceChatContextValue = {
   expandedRepoIds: Record<string, boolean>;
   messages: ChatMessage[];
   loading: boolean;
+  // 仓库列表加载失败信息（区分「真的没有项目」与「后端不可用」）
+  reposError: string | null;
   // 派生值
   selectedRepo: Repository | undefined;
   selectedRepoConversations: ProjectConversation[];
@@ -97,8 +101,32 @@ export function useWorkspaceChat(): WorkspaceChatContextValue {
   return ctx;
 }
 
+const EMPTY_REPOS: Repository[] = [];
+const SELECTED_REPO_STORAGE_KEY = "kynflow.selectedRepoId";
+const SELECTED_CONVERSATION_STORAGE_KEY = "kynflow.selectedConversationId";
+
 export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
-  const [repos, setRepos] = useState<Repository[]>([]);
+  const queryClient = useQueryClient();
+  const reposQuery = useQuery({
+    queryKey: ["repos"],
+    queryFn: () => apiGet<Repository[]>("/api/repos"),
+    staleTime: 60_000,
+  });
+  const repos = reposQuery.data ?? EMPTY_REPOS;
+  const reposError = reposQuery.error ? getFriendlyError(reposQuery.error) : null;
+  // 保持 setRepos 的对外 API 不变，但写入 react-query 缓存：跨路由共享、自动去重。
+  const setRepos = useCallback<Dispatch<SetStateAction<Repository[]>>>(
+    (action) => {
+      queryClient.setQueryData<Repository[]>(["repos"], (current) => {
+        const previous = current ?? [];
+        return typeof action === "function"
+          ? (action as (value: Repository[]) => Repository[])(previous)
+          : action;
+      });
+    },
+    [queryClient],
+  );
+
   const [selectedRepoId, setSelectedRepoId] = useState("");
   const [conversationMap, setConversationMap] = useState<Record<string, ProjectConversation[]>>({});
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -131,28 +159,16 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
   }
 
   async function loadRepos() {
-    const items = await apiGet<Repository[]>("/api/repos");
-    setRepos(items);
-    const pairs = await Promise.all(
-      items.map(
-        async (repo) =>
-          [
-            repo.id,
-            await apiGet<ProjectConversation[]>(`/api/repos/${repo.id}/conversations`).catch(
-              () => [],
-            ),
-          ] as const,
-      ),
-    );
-    const nextMap = Object.fromEntries(pairs);
-    setConversationMap(nextMap);
+    const { data } = await reposQuery.refetch();
+    const items = data ?? [];
     setExpandedRepoIds((current) => {
       const firstRepoId = items[0]?.id;
       return firstRepoId && Object.keys(current).length === 0 ? { [firstRepoId]: true } : current;
     });
-    setSelectedRepoId((current) => current || items[0]?.id || "");
-    setSelectedConversationId(
-      (current) => current || (items[0] ? (nextMap[items[0].id]?.[0]?.id ?? "") : ""),
+    // 不再为每个仓库预拉会话列表（原实现是 mount 时 N 次请求）；
+    // 会话改为按需加载，由下方「会话选择纠偏」effect 负责。
+    setSelectedRepoId((current) =>
+      current && items.some((repo) => repo.id === current) ? current : (items[0]?.id ?? ""),
     );
   }
 
@@ -700,11 +716,29 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // 挂载即加载仓库与会话列表（跨路由持久，只加载一次）。
+  // 挂载即加载仓库列表（react-query 缓存，跨路由只打一次）。
   useEffect(() => {
-    loadRepos().catch(() => setRepos([]));
+    void loadRepos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 刷新后恢复上次选中的仓库 / 会话（localStorage 只在客户端可用，放在 effect 里避免水合不一致）。
+  useEffect(() => {
+    const storedRepo = window.localStorage.getItem(SELECTED_REPO_STORAGE_KEY);
+    const storedConversation = window.localStorage.getItem(SELECTED_CONVERSATION_STORAGE_KEY);
+    if (storedRepo) setSelectedRepoId((current) => current || storedRepo);
+    if (storedConversation) setSelectedConversationId((current) => current || storedConversation);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRepoId) return;
+    window.localStorage.setItem(SELECTED_REPO_STORAGE_KEY, selectedRepoId);
+  }, [selectedRepoId]);
+
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    window.localStorage.setItem(SELECTED_CONVERSATION_STORAGE_KEY, selectedConversationId);
+  }, [selectedConversationId]);
 
   // 会话选择纠偏：conversationMap 为空时补拉，selectedConversationId 失效时回退。
   useEffect(() => {
@@ -748,6 +782,7 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
     expandedRepoIds,
     messages,
     loading,
+    reposError,
     selectedRepo,
     selectedRepoConversations,
     selectedConversation,
