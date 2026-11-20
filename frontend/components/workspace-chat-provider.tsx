@@ -135,6 +135,7 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const streamAbortRef = useRef<AbortController | null>(null);
+  const streamTargetRef = useRef<{ repoId: string; conversationId: string } | null>(null);
   const skipHistoryLoadRef = useRef(false);
   const depsRef = useRef<WorkspaceChatDeps>({ teamMembers: [], memoryNotes: [] });
 
@@ -286,6 +287,14 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
 
   function stopAgentResponse() {
     streamAbortRef.current?.abort();
+    const target = streamTargetRef.current;
+    if (target) {
+      // fire-and-forget：显式通知后端停止，不依赖 HTTP 断连传播。
+      void apiPost("/api/chat/stop", {
+        repo_id: target.repoId,
+        conversation_id: target.conversationId,
+      }).catch(() => {});
+    }
   }
 
   function markAssistantStopped(assistantId: string) {
@@ -362,6 +371,10 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
+    streamTargetRef.current = {
+      repoId: selectedRepo.id,
+      conversationId: activeConversation.id,
+    };
     try {
       setMessages((items) => [
         ...items,
@@ -480,6 +493,7 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
       );
       if (streamAbortRef.current === abortController) {
         streamAbortRef.current = null;
+        streamTargetRef.current = null;
       }
       setLoading(false);
     }
@@ -569,6 +583,10 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
+    streamTargetRef.current = {
+      repoId: selectedRepo.id,
+      conversationId: activeConversation.id,
+    };
     setMessages((items) =>
       items.map((item) =>
         item.id === messageId
@@ -671,6 +689,7 @@ export function WorkspaceChatProvider({ children }: { children: ReactNode }) {
       );
       if (streamAbortRef.current === abortController) {
         streamAbortRef.current = null;
+        streamTargetRef.current = null;
       }
       setLoading(false);
     }

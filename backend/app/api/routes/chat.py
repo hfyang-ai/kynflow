@@ -1,7 +1,8 @@
+import asyncio
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,7 @@ from app.db.models import (
     AgentTaskRun,
     AgentWorkflowRun,
     ChatMessage,
+    Conversation,
     Issue,
     PullRequest,
     Repository,
@@ -21,6 +23,7 @@ from app.schemas.chat import (
     ChatPlanExecuteRequest,
     ChatRequest,
     ChatResponse,
+    ChatStopRequest,
     PromptRecommendationRequest,
     PromptRecommendationResponse,
 )
@@ -50,6 +53,69 @@ from app.tools.helpers import _repo_payload
 from app.tools.workspace import _repo_checkout_path  # noqa: F401  (re-export for tests)
 
 router = APIRouter()
+
+# 进行中的流式生成，按 conversation_id 记录一个取消信号。stop 端点会 set 它，
+# 让生成器在下一个检查点主动终止（不依赖 HTTP 断连传播，反代缓冲下也有效）。
+_active_stops: dict[str, asyncio.Event] = {}
+
+
+class ClientDisconnected(Exception):
+    """客户端在流式响应期间断开，或显式请求停止。"""
+
+
+async def _check_cancellation(
+    request: Request, stop_event: asyncio.Event | None = None
+) -> None:
+    if await request.is_disconnected():
+        raise ClientDisconnected()
+    if stop_event is not None and stop_event.is_set():
+        raise ClientDisconnected()
+
+
+def _persist_cancelled_run(
+    db: Session,
+    *,
+    repo: Repository,
+    conversation: Conversation,
+    user_message: ChatMessage,
+    message_store: MessageStore,
+    payload_message: str,
+) -> dict[str, Any]:
+    """取消/断开后补写终态，消除孤儿用户消息。
+
+    全程同步（不 await），避免在 asyncio.CancelledError 上下文里再次被取消。
+    """
+    run_id = uuid.uuid4()
+    answer = "已停止响应。"
+    try:
+        assistant_message = message_store.append(
+            repo_id=repo.id,
+            conversation_id=conversation.id,
+            role="assistant",
+            content=answer,
+            route="cancelled",
+            tool_calls=[],
+            meta={"run_id": str(run_id), "cancelled": True},
+        )
+        db.add(
+            AgentRun(
+                id=run_id,
+                repo_id=repo.id,
+                conversation_id=conversation.id,
+                user_message=payload_message,
+                route="cancelled",
+                tool_calls=[],
+                final_answer=answer,
+                status="cancelled",
+            )
+        )
+        touch_conversation(db, conversation, user_message=payload_message, increment=2)
+        db.commit()
+        return {"run_id": str(run_id), "message_id": str(assistant_message.id)}
+    except Exception:
+        # 清理失败不能掩盖原始取消，回滚并返回空结果。
+        db.rollback()
+        return {}
 
 
 @router.get("/workflow-runs")
@@ -392,7 +458,9 @@ def _workflow_execution_trace_events(
     return events
 
 
-async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Session):
+async def _conversation_plan_execute_sse(
+    payload: ChatPlanExecuteRequest, db: Session, request: Request
+):
     repo = _repo_or_404(db, payload.repo_id)
 
     conversation = ensure_conversation(db, repo.id, payload.conversation_id)
@@ -427,8 +495,28 @@ async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Se
     workflow_tool_id = (
         f"confirmed_{payload.workflow_spec.get('workflow_id') or uuid.uuid4().hex[:8]}"
     )
+    stop_event = asyncio.Event()
+    _active_stops[str(conversation.id)] = stop_event
+    workflow_run_id: uuid.UUID | None = None
+
+    def _finalize_cancel() -> None:
+        _persist_cancelled_run(
+            db,
+            repo=repo,
+            conversation=conversation,
+            user_message=user_message,
+            message_store=message_store,
+            payload_message=payload.message,
+        )
+        if workflow_run_id is not None:
+            row = db.get(AgentWorkflowRun, workflow_run_id)
+            if row is not None:
+                row.status = "cancelled"
+                db.commit()
+
     try:
         spec = WorkflowSpec.model_validate(payload.workflow_spec)
+        await _check_cancellation(request, stop_event)
         yield encode_sse(
             {
                 "event": "tool_use",
@@ -452,6 +540,7 @@ async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Se
         workflow_run_id = _persist_engineering_workflow(db, repo, conversation, report)
         report["metrics"]["workflow_run_id"] = str(workflow_run_id)
         for event in _workflow_execution_trace_events(report, workflow_tool_id):
+            await _check_cancellation(request, stop_event)
             yield encode_sse(event)
 
         result = _engineering_workflow_response(repo, workflow_run_id, report)
@@ -460,6 +549,7 @@ async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Se
         result["compression_stats"] = assembled.compression_stats
         result["progressive_compaction"] = compaction_stats
         for index in range(0, len(result["answer"]), 48):
+            await _check_cancellation(request, stop_event)
             yield encode_sse(
                 {
                     "event": "delta",
@@ -509,7 +599,13 @@ async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Se
             context_diagnostics=result.get("context_diagnostics", {}),
         )
         db.commit()
+        await _check_cancellation(request, stop_event)
         yield encode_sse({"event": "final", "data": result})
+    except ClientDisconnected:
+        _finalize_cancel()
+    except asyncio.CancelledError:
+        _finalize_cancel()
+        raise
     except Exception as exc:
         db.rollback()
         run_id = uuid.uuid4()
@@ -560,6 +656,8 @@ async def _conversation_plan_execute_sse(payload: ChatPlanExecuteRequest, db: Se
                 },
             }
         )
+    finally:
+        _active_stops.pop(str(conversation.id), None)
 
 
 async def _conversation_response(payload: ChatRequest, db: Session) -> dict[str, Any]:
@@ -644,7 +742,7 @@ async def _conversation_response(payload: ChatRequest, db: Session) -> dict[str,
     return result
 
 
-async def _conversation_sse(payload: ChatRequest, db: Session):
+async def _conversation_sse(payload: ChatRequest, db: Session, request: Request):
     repo = _repo_or_404(db, payload.repo_id)
     conversation = ensure_conversation(db, repo.id, payload.conversation_id)
     db.commit()
@@ -675,6 +773,8 @@ async def _conversation_sse(payload: ChatRequest, db: Session):
         "progressive_compaction": compaction_stats,
     }
     context["tools"] = _build_conversation_tools(repo, conversation, db)
+    stop_event = asyncio.Event()
+    _active_stops[str(conversation.id)] = stop_event
     try:
         async for event in ChatAgent().run_stream(
             {"message": payload.message}, context
@@ -730,7 +830,27 @@ async def _conversation_sse(payload: ChatRequest, db: Session):
                     context_diagnostics=event["data"].get("context_diagnostics", {}),
                 )
                 db.commit()
+            await _check_cancellation(request, stop_event)
             yield encode_sse(event)
+    except ClientDisconnected:
+        _persist_cancelled_run(
+            db,
+            repo=repo,
+            conversation=conversation,
+            user_message=user_message,
+            message_store=message_store,
+            payload_message=payload.message,
+        )
+    except asyncio.CancelledError:
+        _persist_cancelled_run(
+            db,
+            repo=repo,
+            conversation=conversation,
+            user_message=user_message,
+            message_store=message_store,
+            payload_message=payload.message,
+        )
+        raise
     except Exception as exc:
         db.rollback()
         run_id = uuid.uuid4()
@@ -779,6 +899,8 @@ async def _conversation_sse(payload: ChatRequest, db: Session):
         )
         db.commit()
         yield encode_sse(failed_event)
+    finally:
+        _active_stops.pop(str(conversation.id), None)
 
 
 @router.post("/plan")
@@ -793,10 +915,11 @@ async def chat_plan(
 
 @router.post("/plan/execute/stream")
 async def chat_plan_execute_stream(
-    payload: ChatPlanExecuteRequest, db: Session = Depends(get_db)
+    payload: ChatPlanExecuteRequest, request: Request, db: Session = Depends(get_db)
 ) -> StreamingResponse:
     return StreamingResponse(
-        _conversation_plan_execute_sse(payload, db), media_type="text/event-stream"
+        _conversation_plan_execute_sse(payload, db, request),
+        media_type="text/event-stream",
     )
 
 
@@ -807,11 +930,26 @@ async def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> dict[str,
 
 @router.post("/stream")
 async def chat_stream(
-    payload: ChatRequest, db: Session = Depends(get_db)
+    payload: ChatRequest, request: Request, db: Session = Depends(get_db)
 ) -> StreamingResponse:
     return StreamingResponse(
-        _conversation_sse(payload, db), media_type="text/event-stream"
+        _conversation_sse(payload, db, request), media_type="text/event-stream"
     )
+
+
+@router.post("/stop")
+async def chat_stop(
+    payload: ChatStopRequest, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    repo = _repo_or_404(db, payload.repo_id)
+    conversation = ensure_conversation(db, repo.id, payload.conversation_id)
+    stop_event = _active_stops.get(str(conversation.id))
+    if stop_event is not None:
+        stop_event.set()
+    return {
+        "status": "stop_requested" if stop_event else "no_active_stream",
+        "conversation_id": str(conversation.id),
+    }
 
 
 @router.post("/recommendations", response_model=PromptRecommendationResponse)

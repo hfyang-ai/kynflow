@@ -14,6 +14,11 @@ class ChatPlanExecuteRequest(ChatRequest):
     workflow_spec: dict
 
 
+class ChatStopRequest(BaseModel):
+    repo_id: UUID
+    conversation_id: UUID | None = None
+
+
 class ToolCallTrace(BaseModel):
     tool_name: str
     arguments: dict
